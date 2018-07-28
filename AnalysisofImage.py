@@ -1,10 +1,12 @@
-import os, sys
 import pickle, cv2, glob
+from PCA import PCA
 import matplotlib.pyplot as plt
 from enhance import image_enhance
 from skimage.morphology import skeletonize, thin
 import numpy as np
-
+np.set_printoptions(threshold=np.nan)
+import time
+start = time.time()
 
 def removedot(invertThin):
     temp0 = np.array(invertThin[:])
@@ -39,9 +41,6 @@ def removedot(invertThin):
 
 
 def get_descriptors(img, imageName, database):
-    cv2.imshow('skeleton image',img)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     img = clahe.apply(img)
     img = image_enhance.image_enhance(img)
@@ -59,15 +58,15 @@ def get_descriptors(img, imageName, database):
     skeleton = removedot(skeleton)
 
     # Creating Block Size of 144 x 96 total of 8 blocks for an image and then generating descriptors and keypoints
-    # Storing these 8 descriptors and 8 keypoints of one image in a Mainlist and key(image name) is associated to represent this
+    # Storing these 4 descriptors and 8 keypoints of one image in a Mainlist and key(image name) is associated to represent this
     # list in a dictionary. So we store all these lists of individual in dictionary and pickling dictionary
 
     # Creating List Format ( [[keypoints][descriptors]]): List initialization
     DescriptorList = list()
 
-    for i in range(0, 384, 192):
-        for j in range(0, 288, 144):
-            blockImg = img[i:i + 144, j:j + 192]
+    for i in range(0, 400, 200):
+        for j in range(0, 274, 137):
+            blockImg = img[i:i + 200, j:j + 137]
             # Harris corners
             harris_corners = cv2.cornerHarris(blockImg, 3, 3, 0.04)
             harris_normalized = cv2.normalize(harris_corners, 0, 255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32FC1)
@@ -82,76 +81,86 @@ def get_descriptors(img, imageName, database):
             orb = cv2.ORB_create()
             # Compute descriptors
             _, des = orb.compute(blockImg, keypoints)
-            DescriptorList.append(des)
+
+            # pca = PCA(2)  # project from 32 to 2 dimensions
+            # projected = pca.fit_transform(des)
+            # print(des.shape)
+            # print(projected.shape)
+            Reduced_des = PCA(des)
+            print(type(Reduced_des))
+            print(Reduced_des.shape)
+            DescriptorList.append(Reduced_des)
 
     database.update({imageName: DescriptorList})
-    # return (keypoints, des);
+    # return (keypoints, des)
     # return database
 
 
 def ScoreCalc(matches, ScorePercent, column):
     for i in range(4):
         score = 0
-        for match in matches[i]:
-            score += match.distance
-        score_threshold = 33
-        k = 100 - (score / len(matches[i]))
-        ScorePercent[i][column] = k
+        if len(matches[i]) == 0:
+            ScorePercent[i][column] = 0
+        else:
+            for match in matches[i]:
+                score += match.distance
+            score_threshold = 33
+            k = 100 - (score / len(matches[i]))
+            ScorePercent[i][column] = k
+
 
 def BarGraph(Data):
-
-    x = [0,2,4,6]
+    x = [0, 2, 4, 6]
 
     plt.ylim(0, 100)
-    plt.bar(x, Data, label = 'Matching %')
+    plt.bar(x, Data, label='Matching %')
 
     plt.xlabel('Blocks')
     plt.ylabel('Percentage')
     plt.title('Matching Percentage of blocks')
-    plt.legend()
     plt.show()
 
 
 def main():
-    # database = dict()
-    # images = glob.glob("train/*.jpg")
-    # for image in images:
-    #     img = cv2.imread(image, cv2.IMREAD_GRAYSCALE)
-    #     get_descriptors(img, image, database)
+    database = dict()
+    images = glob.glob("train/*.jpg")
+    for image in images:
+        img = cv2.imread(image, cv2.IMREAD_GRAYSCALE)
+        get_descriptors(img, image, database)
 
-    # img1 = cv2.imread("12train.jpg", cv2.IMREAD_GRAYSCALE)
+    # img1 = cv2.imread("c1.jpg", cv2.IMREAD_GRAYSCALE)
     # imageName1 = '12train.jpg'
-    # img2 = cv2.imread("12test.jpg", cv2.IMREAD_GRAYSCALE)
+    # img2 = cv2.imread("c2.jpg", cv2.IMREAD_GRAYSCALE)
     # imageName2 = '12test.jpg'
-    # # kp2, des2 = get_descriptors(img2)
-    # db1 = get_descriptors(img1,imageName1,database)
-    # db2 = get_descriptors(img2, imageName2,database)
+    # # # kp2, des2 = get_descriptors(img2)
+    # get_descriptors(img1,imageName1,database)
+    # get_descriptors(img2, imageName2,database)
 
     # Pickling the descriptors
-    # pickle_out = open("BlockWiseData.pickle", "wb")
-    # pickle.dump(database, pickle_out)
-    # pickle_out.close()
+    pickle_out = open("BlockWiseData.pickle", "wb")
+    pickle.dump(database, pickle_out)
+    pickle_out.close()
 
     pickle_in = open("BlockWiseData.pickle", "rb")
     dta = pickle.load(pickle_in)
-    # print(dta['train\\12 (1).jpg'][0])
 
-
-
-    # # Matching between descriptors
-    bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+    # Matching between descriptors
+    bf = cv2.BFMatcher(cv2.NORM_L2, crossCheck=True) # I changed crossCheck to False
     ScorePercent = np.zeros([4, 7], dtype=float)
 
     for i in range(2, 9):
         matches = list()
-        compared = 'train\\12 (' + str(i) + ').jpg'
+        compared = 'train\\' + str(i) + '.jpg'
         for j in range(0, 4):
-            matches.append(sorted(bf.match(dta['train\\12 (1).jpg'][j], dta[compared][j]), key=lambda match: match.distance))
-        ScoreCalc(matches, ScorePercent, i-2)
+            matches.append(
+            sorted(bf.match(dta['train\\1.jpg'][j], dta[compared][j]), key=lambda match: match.distance))
+
+        ScoreCalc(matches, ScorePercent, i - 2)
 
     Avg_ScorePercent = np.mean(ScorePercent, axis=1)
     BarGraph(Avg_ScorePercent)
-    # print(ScorePercent)
+    print(Avg_ScorePercent)
+
     # # Plot keypoints
     # img4 = cv2.drawKeypoints(img, kp1, outImage=None)
     # img5 = cv2.drawKeypoints(img2, kp2, outImage=None)
@@ -167,11 +176,11 @@ def main():
 # plt.show()
 
 
-
 # if score/len(matches) < score_threshold:
 #    	print("Fingerprint matches.")
 # else:
 #     print("Fingerprint does not match.")
+    print('It took', time.time() - start, 'seconds.')
 
 
 if __name__ == "__main__":
